@@ -1,0 +1,402 @@
+/* =========================
+   Enums (added statuses)
+   ========================= */
+enum SystemType { MAIN, SHADOW }
+enum AccountType { ASSET, LIABILITY, EQUITY, REVENUE, EXPENSE, BANK, CARD, CASH }
+enum PaymentMethodType { BANK, CARD, CASHBOX }
+enum TaxType { VAT, SALES_TAX, ZERO, EXEMPT }
+enum UnitClass { COUNT, WEIGHT, VOLUME, LENGTH, AREA, TIME, OTHER }
+enum DocumentStatus { DRAFT, APPROVED, POSTED, REVERSED, CANCELLED }
+enum PaymentStatus { DRAFT, APPROVED, POSTED, VOIDED }
+enum PriceListLevel { RETAIL, WHOLESALE, CUSTOM }
+
+/* =========================
+   Core Master Data
+   ========================= */
+entity Warehouse {
+  code String required unique minlength(1) maxlength(32),
+  name String required minlength(1) maxlength(128),
+  isActive Boolean required
+}
+
+entity UnitOfMeasure {
+  code String required unique minlength(1) maxlength(16),
+  name String required minlength(1) maxlength(64),
+  unitClass UnitClass required,
+  precision Integer required min(0) max(6)
+}
+
+entity Category {
+  code String required unique minlength(1) maxlength(32),
+  name String required minlength(1) maxlength(128)
+}
+
+entity Brand {
+  name String required unique minlength(1) maxlength(128)
+}
+
+entity Item {
+  sku String required unique minlength(1) maxlength(64),
+  name String required minlength(1) maxlength(256),
+  barcode String minlength(1) maxlength(64),
+  purchasePrice BigDecimal required,
+  salesPrice BigDecimal required,
+  isActive Boolean required,
+  trackInventory Boolean required,
+  allowShadow Boolean required,
+  /* NEW: batch & expiry control */
+  trackBatch Boolean required,
+  expiryRequired Boolean required,
+  notes String maxlength(2048)
+}
+
+relationship ManyToOne {
+  Item{category(code)} to Category,
+  Item{brand(name)} to Brand,
+  Item{uom(code)} to UnitOfMeasure
+}
+
+/* =========================
+   Parties
+   ========================= */
+entity Customer {
+  code String required unique minlength(1) maxlength(32),
+  name String required minlength(1) maxlength(256),
+  vatNumber String maxlength(64),
+  phone String maxlength(64),
+  email String maxlength(128),
+  address String maxlength(512),
+  isActive Boolean required
+}
+
+entity Supplier {
+  code String required unique minlength(1) maxlength(32),
+  name String required minlength(1) maxlength(256),
+  vatNumber String maxlength(64),
+  phone String maxlength(64),
+  email String maxlength(128),
+  address String maxlength(512),
+  isActive Boolean required
+}
+
+/* =========================
+   Tax / VAT
+   ========================= */
+entity TaxRate {
+  code String required unique minlength(1) maxlength(32),
+  name String required minlength(1) maxlength(128),
+  type TaxType required,
+  rate BigDecimal required min(0),
+  isActive Boolean required
+}
+
+relationship ManyToOne {
+  Item{defaultTax(code)} to TaxRate
+}
+
+/* =========================
+   Price Lists (NEW)
+   ========================= */
+entity PriceList {
+  code String required unique minlength(1) maxlength(32),
+  name String required minlength(1) maxlength(128),
+  level PriceListLevel required,
+  currency String required minlength(3) maxlength(3),
+  validFrom Instant required,
+  validTo Instant,
+  isActive Boolean required
+}
+
+entity PriceListLine {
+  minQty BigDecimal required min(0),
+  unitPrice BigDecimal required min(0),
+  /* optional: override tax */
+  taxIncluded Boolean required,
+  notes String maxlength(512)
+}
+
+relationship ManyToOne {
+  PriceListLine{priceList(code)} to PriceList,
+  PriceListLine{item(sku)} to Item,
+  PriceList{defaultTax(code)} to TaxRate
+}
+
+/* Assign a price list to a customer */
+entity CustomerPriceList { /* associative entity */
+  activeFrom Instant required,
+  activeTo Instant
+}
+relationship ManyToOne {
+  CustomerPriceList{customer(code)} to Customer,
+  CustomerPriceList{priceList(code)} to PriceList
+}
+
+/* =========================
+   Invoicing (+ Status + Batch)
+   ========================= */
+entity SalesInvoice {
+  number String required unique minlength(1) maxlength(32),
+  issueDate Instant required,
+  dueDate Instant,
+  notes String maxlength(2048),
+  currency String required minlength(3) maxlength(3),
+  exchangeRate BigDecimal required min(0),
+  subtotal BigDecimal required min(0),
+  taxTotal BigDecimal required min(0),
+  discountTotal BigDecimal required min(0),
+  grandTotal BigDecimal required min(0),
+  systemType SystemType required,
+  /* NEW: status workflow */
+  status DocumentStatus required,
+  posted Boolean required,
+  reversed Boolean required
+}
+
+entity SalesInvoiceLine {
+  lineNo Integer required min(1),
+  description String maxlength(512),
+  quantity BigDecimal required min(0),
+  unitPrice BigDecimal required min(0),
+  discount BigDecimal required min(0),
+  taxAmount BigDecimal required min(0),
+  lineTotal BigDecimal required min(0),
+
+  /* Shadow flags and overrides */
+  isShadow Boolean required,
+  shadowQuantity BigDecimal min(0),
+  shadowUnitPrice BigDecimal min(0),
+
+  /* NEW: Batch/Lot link (optional) */
+  batchLotNo String maxlength(64),
+  expiryDate Instant
+}
+
+relationship ManyToOne {
+  SalesInvoiceLine{invoice(number)} to SalesInvoice,
+  SalesInvoiceLine{item(sku)} to Item,
+  SalesInvoice{customer(code)} to Customer,
+  SalesInvoice{warehouse(code)} to Warehouse,
+  SalesInvoiceLine{tax(code)} to TaxRate
+}
+
+entity PurchaseInvoice {
+  number String required unique minlength(1) maxlength(32),
+  issueDate Instant required,
+  dueDate Instant,
+  notes String maxlength(2048),
+  currency String required minlength(3) maxlength(3),
+  exchangeRate BigDecimal required min(0),
+  subtotal BigDecimal required min(0),
+  taxTotal BigDecimal required min(0),
+  discountTotal BigDecimal required min(0),
+  grandTotal BigDecimal required min(0),
+  systemType SystemType required,
+  /* NEW: status workflow */
+  status DocumentStatus required,
+  posted Boolean required,
+  reversed Boolean required
+}
+
+entity PurchaseInvoiceLine {
+  lineNo Integer required min(1),
+  description String maxlength(512),
+  quantity BigDecimal required min(0),
+  unitCost BigDecimal required min(0),
+  discount BigDecimal required min(0),
+  taxAmount BigDecimal required min(0),
+  lineTotal BigDecimal required min(0),
+
+  isShadow Boolean required,
+  shadowQuantity BigDecimal min(0),
+  shadowUnitCost BigDecimal min(0),
+
+  /* NEW: Batch/Lot link for receipts */
+  batchLotNo String maxlength(64),
+  expiryDate Instant
+}
+
+relationship ManyToOne {
+  PurchaseInvoiceLine{invoice(number)} to PurchaseInvoice,
+  PurchaseInvoiceLine{item(sku)} to Item,
+  PurchaseInvoice{supplier(code)} to Supplier,
+  PurchaseInvoice{warehouse(code)} to Warehouse,
+  PurchaseInvoiceLine{tax(code)} to TaxRate
+}
+
+/* =========================
+   Inventory Movements / Stock Ledger
+   ========================= */
+entity StockMovement {
+  number String required unique minlength(1) maxlength(32),
+  movementDate Instant required,
+  reason String maxlength(256),
+  systemType SystemType required,
+  /* NEW: status workflow */
+  status DocumentStatus required,
+  posted Boolean required
+}
+
+entity StockMovementLine {
+  lineNo Integer required min(1),
+  quantity BigDecimal required,
+  /* NEW: Batch on movement lines */
+  batchLotNo String maxlength(64),
+  expiryDate Instant
+}
+
+relationship ManyToOne {
+  StockMovement{warehouse(code)} to Warehouse,
+  StockMovementLine{movement(number)} to StockMovement,
+  StockMovementLine{item(sku)} to Item
+}
+
+/* Read model / audit */
+entity StockLedger {
+  eventRef String required maxlength(64), // e.g., SI-1001:L2
+  eventType String required maxlength(32), // SALES, PURCHASE, ADJUST, TRANSFER
+  eventDate Instant required,
+  warehouseCode String required maxlength(32),
+  itemSku String required maxlength(64),
+  qtyDelta BigDecimal required,
+  costAmount BigDecimal required,
+  systemType SystemType required,
+  /* NEW: keep batch traceability */
+  batchLotNo String maxlength(64),
+  expiryDate Instant
+}
+
+/* Transfers (+ Status) */
+entity Transfer {
+  number String required unique minlength(1) maxlength(32),
+  transferDate Instant required,
+  notes String maxlength(512),
+  systemType SystemType required,
+  status DocumentStatus required,
+  posted Boolean required
+}
+
+entity TransferLine {
+  lineNo Integer required min(1),
+  quantity BigDecimal required min(0),
+  batchLotNo String maxlength(64),
+  expiryDate Instant
+}
+
+relationship ManyToOne {
+  Transfer{fromWarehouse(code)} to Warehouse,
+  Transfer{toWarehouse(code)} to Warehouse,
+  TransferLine{transfer(number)} to Transfer,
+  TransferLine{item(sku)} to Item
+}
+
+/* =========================
+   Finance (GL, Payments) + Status
+   ========================= */
+entity LedgerAccount {
+  code String required unique minlength(1) maxlength(32),
+  name String required minlength(1) maxlength(128),
+  type AccountType required,
+  parentCode String maxlength(32),
+  isActive Boolean required
+}
+
+entity JournalEntry {
+  number String required unique minlength(1) maxlength(32),
+  entryDate Instant required,
+  memo String maxlength(512),
+  systemType SystemType required,
+  status DocumentStatus required,
+  posted Boolean required
+}
+
+entity JournalLine {
+  lineNo Integer required min(1),
+  debit BigDecimal required min(0),
+  credit BigDecimal required min(0),
+  ref String maxlength(64)
+}
+
+relationship ManyToOne {
+  JournalLine{entry(number)} to JournalEntry,
+  JournalLine{account(code)} to LedgerAccount
+}
+
+entity Payment {
+  number String required unique minlength(1) maxlength(32),
+  paymentDate Instant required,
+  method PaymentMethodType required,
+  amount BigDecimal required min(0),
+  currency String required minlength(3) maxlength(3),
+  exchangeRate BigDecimal required min(0),
+  memo String maxlength(512),
+  systemType SystemType required,
+  /* NEW: status */
+  status PaymentStatus required,
+  posted Boolean required
+}
+
+entity BankAccount {
+  code String required unique minlength(1) maxlength(32),
+  name String required minlength(1) maxlength(128),
+  iban String maxlength(34),
+  isActive Boolean required
+}
+entity CardAccount {
+  code String required unique minlength(1) maxlength(32),
+  name String required minlength(1) maxlength(128),
+  last4 String maxlength(4),
+  isActive Boolean required
+}
+entity Cashbox {
+  code String required unique minlength(1) maxlength(32),
+  name String required minlength(1) maxlength(128),
+  location String maxlength(128),
+  isActive Boolean required
+}
+
+relationship ManyToOne {
+  Payment{customer(code)} to Customer,
+  Payment{supplier(code)} to Supplier,
+  Payment{bankAccount(code)} to BankAccount,
+  Payment{cardAccount(code)} to CardAccount,
+  Payment{cashbox(code)} to Cashbox
+}
+
+/* Link payments to invoices */
+entity PaymentAllocation {
+  amount BigDecimal required min(0)
+}
+relationship ManyToOne {
+  PaymentAllocation{payment(number)} to Payment,
+  PaymentAllocation{salesInvoice(number)} to SalesInvoice,
+  PaymentAllocation{purchaseInvoice(number)} to PurchaseInvoice
+}
+
+/* =========================
+   Numbering + Ownership
+   ========================= */
+entity NumberSeries {
+  context String required unique maxlength(32),
+  prefix String maxlength(8),
+  nextNumber Long required min(1),
+  suffix String maxlength(8),
+  pad Integer required min(0) max(8)
+}
+
+relationship ManyToOne {
+  SalesInvoice{createdBy(login)} to User,
+  PurchaseInvoice{createdBy(login)} to User,
+  StockMovement{createdBy(login)} to User,
+  Transfer{createdBy(login)} to User,
+  JournalEntry{createdBy(login)} to User,
+  Payment{createdBy(login)} to User
+}
+
+/* =========================
+   Options
+   ========================= */
+dto * with mapstruct
+service all with serviceClass
+paginate Item, Customer, Supplier, SalesInvoice, PurchaseInvoice, StockLedger, JournalEntry, Payment, PriceList, PriceListLine, CustomerPriceList with pagination
+filter *
+readOnly StockLedger
